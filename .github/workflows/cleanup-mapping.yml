@@ -11,53 +11,55 @@ jobs:
 
     steps:
       - name: Install dependencies
-        run: sudo apt-get install -y jq
+        run: sudo apt-get update && sudo apt-get install -y jq python3-pip
 
-      - name: Fetch token and mapping, run cleanup
+      - name: Fetch token, mapping & generate cleanup script
         run: |
-          echo "Fetching token..."
-          token=$(curl -s https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt | head -n1 | tr -d '\r')
-
-          echo "Fetching current mapping file..."
+          TOKEN=$(curl -s https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt | head -n1 | tr -d '\r')
           curl -s https://gist.githubusercontent.com/Preasx24/451a35def0daf123212fcb9729d3dfdd/raw/gistfile1.txt -o mapping.json
 
-          echo "Creating cleanup script..."
-          cat > clean.py << 'EOF'
+          cat << 'PY' > clean.py
+#!/usr/bin/env python3
 import json, time
 
 with open("mapping.json") as f:
     data = json.load(f)
 
 now = int(time.time())
+
+# Subtract 1h from every _expires
 expires = data.get("_expires", {})
+for k in list(expires):
+    expires[k] -= 3600
 
-to_remove = []
-for key, exp in list(expires.items()):
-    new_exp = exp - 3600
-    if new_exp <= now:
-        to_remove.append(key)
-    else:
-        expires[key] = new_exp
-
-for key in to_remove:
-    data.pop(key, None)
-    expires.pop(key, None)
+# Remove expired
+for k, exp in list(expires.items()):
+    if exp <= now:
+        data.pop(k, None)
+        expires.pop(k, None)
 
 data["_expires"] = expires
 
 with open("updated.json", "w") as f:
     json.dump(data, f, indent=2)
-EOF
+PY
 
-          echo "Running cleanup..."
+      - name: Run cleanup
+        run: |
           python3 clean.py
 
-          echo "Getting Gist ID..."
-          gist_id=$(curl -s -H "Authorization: Bearer $token" https://api.github.com/gists \
+      - name: Patch Gist
+        env:
+          GIST_TOKEN: ${{ steps.fetch.outputs.TOKEN }}
+        run: |
+          GIST_ID=$(curl -s -H "Authorization: Bearer $TOKEN" https://api.github.com/gists \
             | jq -r '.[] | select(.files["gistfile1.txt"]) | .id' | head -n1)
 
-          echo "Patching Gist..."
-          curl -X PATCH "https://api.github.com/gists/$gist_id" \
-            -H "Authorization: Bearer $token" \
+          jq -n --rawfile content updated.json \
+            '{ files: { "gistfile1.txt": { content: $content } } }' \
+            > payload.json
+
+          curl -X PATCH "https://api.github.com/gists/$GIST_ID" \
+            -H "Authorization: Bearer $TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --rawfile content updated.json '{files: {"gistfile1.txt": {content: $content}}}')"
+            --data @payload.json
