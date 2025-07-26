@@ -2,64 +2,56 @@ name: Cleanup Gist Mapping
 
 on:
   schedule:
-    - cron: "0 * * * *"  # Every hour
+    - cron: "0 * * * *"   # every hour
   workflow_dispatch:
 
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq python3-pip
+      - name: Cleanup expired entries in Gist
+        uses: actions/github-script@v6
+        with:
+          # give the script permission to read/write any Gist (we supply token manually)
+          github-token: ${{ secrets.DUMMY }} # not used by script
+          script: |
+            const fetch = require('node-fetch');
 
-      - name: Fetch token, mapping & generate cleanup script
-        run: |
-          TOKEN=$(curl -s https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt | head -n1 | tr -d '\r')
-          curl -s https://gist.githubusercontent.com/Preasx24/451a35def0daf123212fcb9729d3dfdd/raw/gistfile1.txt -o mapping.json
+            // 1) Load your GitHub token from the first line of the token-Gist
+            const tokenGistUrl = 'https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt';
+            const token = (await fetch(tokenGistUrl).then(r => r.text())).split('\n')[0].trim();
 
-          cat << 'PY' > clean.py
-#!/usr/bin/env python3
-import json, time
+            // 2) Instantiate an Octokit client with your token
+            const { Octokit } = require("@octokit/rest");
+            const octokit = new Octokit({ auth: token });
 
-with open("mapping.json") as f:
-    data = json.load(f)
+            // 3) Find your mapping Gist
+            const gists = await octokit.gists.list();
+            const mappingGist = gists.data.find(g => g.files["gistfile1.txt"]);
+            if (!mappingGist) throw new Error("Mapping Gist not found!");
 
-now = int(time.time())
+            // 4) Fetch and parse the current mapping JSON
+            const raw = await fetch(mappingGist.files["gistfile1.txt"].raw_url).then(r => r.text());
+            const mapping = JSON.parse(raw);
 
-# Subtract 1h from every _expires
-expires = data.get("_expires", {})
-for k in list(expires):
-    expires[k] -= 3600
+            // 5) Subtract 3600s from each _expires, remove those now <= now
+            const now = Math.floor(Date.now()/1000);
+            for (const key of Object.keys(mapping._expires || {})) {
+              mapping._expires[key] -= 3600;
+              if (mapping._expires[key] <= now) {
+                delete mapping._expires[key];
+                delete mapping[key];
+              }
+            }
 
-# Remove expired
-for k, exp in list(expires.items()):
-    if exp <= now:
-        data.pop(k, None)
-        expires.pop(k, None)
+            // 6) Push the updated JSON back to the same Gist
+            await octokit.gists.update({
+              gist_id: mappingGist.id,
+              files: {
+                "gistfile1.txt": {
+                  content: JSON.stringify(mapping, null, 2)
+                }
+              }
+            });
 
-data["_expires"] = expires
-
-with open("updated.json", "w") as f:
-    json.dump(data, f, indent=2)
-PY
-
-      - name: Run cleanup
-        run: |
-          python3 clean.py
-
-      - name: Patch Gist
-        env:
-          GIST_TOKEN: ${{ steps.fetch.outputs.TOKEN }}
-        run: |
-          GIST_ID=$(curl -s -H "Authorization: Bearer $TOKEN" https://api.github.com/gists \
-            | jq -r '.[] | select(.files["gistfile1.txt"]) | .id' | head -n1)
-
-          jq -n --rawfile content updated.json \
-            '{ files: { "gistfile1.txt": { content: $content } } }' \
-            > payload.json
-
-          curl -X PATCH "https://api.github.com/gists/$GIST_ID" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            --data @payload.json
+            console.log("✅ Cleaned up expired entries.");
