@@ -1,21 +1,19 @@
-name: Cleanup Gist Mapping
+name: Clean Expired Mappings
 
 on:
   schedule:
-    - cron: "0 * * * *"
-  workflow_dispatch:
+    - cron: '0 * * * *'  # Runs every hour
+  workflow_dispatch:     # Allows manual trigger
 
 jobs:
-  cleanup:
+  clean:
     runs-on: ubuntu-latest
     steps:
-      - name: Cleanup expired entries in Gist
+      - name: Clean expired mappings
         uses: actions/github-script@v6
         with:
-          github-token: 'ghp_dummy'  # Required input, but not used
+          github-token: ghp_dummy  # Not used; real token is fetched in script
           script: |
-            const fetch = require('node-fetch');
-
             const tokenGistUrl = 'https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt';
             const token = (await fetch(tokenGistUrl).then(r => r.text())).split('\n')[0].trim();
 
@@ -30,21 +28,32 @@ jobs:
             const mapping = JSON.parse(raw);
 
             const now = Math.floor(Date.now() / 1000);
-            for (const key of Object.keys(mapping._expires || {})) {
-              mapping._expires[key] -= 3600;
-              if (mapping._expires[key] <= now) {
-                delete mapping._expires[key];
+            const expires = mapping._expires || {};
+            let updated = false;
+
+            for (const key of Object.keys(expires)) {
+              expires[key] -= 3600;  // Subtract 1 hour
+              if (expires[key] <= now) {
+                console.log(`🗑 Removing expired entry: ${key}`);
+                delete expires[key];
                 delete mapping[key];
+                updated = true;
               }
             }
 
-            await octokit.gists.update({
-              gist_id: mappingGist.id,
-              files: {
-                "gistfile1.txt": {
-                  content: JSON.stringify(mapping, null, 2)
-                }
-              }
-            });
+            if (updated) {
+              mapping._expires = expires;
 
-            console.log("✅ Cleaned up expired entries.");
+              await octokit.gists.update({
+                gist_id: mappingGist.id,
+                files: {
+                  "gistfile1.txt": {
+                    content: JSON.stringify(mapping, null, 2)
+                  }
+                }
+              });
+
+              console.log("✅ Updated Gist with cleaned mapping.");
+            } else {
+              console.log("ℹ️ No expired entries to remove.");
+            }
