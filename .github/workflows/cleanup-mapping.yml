@@ -19,11 +19,10 @@ jobs:
           token=$(curl -s https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt | head -n1 | tr -d '\r')
 
           echo "Fetching current mapping file..."
-          raw_url="https://gist.githubusercontent.com/Preasx24/451a35def0daf123212fcb9729d3dfdd/raw/gistfile1.txt"
-          curl -s "$raw_url" -o mapping.json
+          curl -s https://gist.githubusercontent.com/Preasx24/451a35def0daf123212fcb9729d3dfdd/raw/gistfile1.txt -o mapping.json
 
-          echo "Creating Python cleanup script..."
-          cat <<EOF > clean.py
+          echo "Creating cleanup script..."
+          cat > clean.py << 'EOF'
 import json, time
 
 with open("mapping.json") as f:
@@ -50,11 +49,12 @@ with open("updated.json", "w") as f:
     json.dump(data, f, indent=2)
 EOF
 
-          echo "Running cleanup script..."
+          echo "Running cleanup..."
           python3 clean.py
 
-          echo "Finding correct Gist ID..."
-          gist_id=$(curl -s -H "Authorization: Bearer $token" https://api.github.com/gists | jq -r '.[] | select(.files["gistfile1.txt"]) | .id')
+          echo "Getting Gist ID..."
+          gist_id=$(curl -s -H "Authorization: Bearer $token" https://api.github.com/gists \
+            | jq -r '.[] | select(.files["gistfile1.txt"]) | .id' | head -n1)
 
           echo "Patching Gist..."
           curl -X PATCH "https://api.github.com/gists/$gist_id" \
