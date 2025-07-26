@@ -11,7 +11,7 @@ jobs:
 
     steps:
       - name: Install dependencies
-        run: sudo apt-get install jq
+        run: sudo apt-get install -y jq
 
       - name: Fetch token and mapping, run cleanup
         run: |
@@ -60,4 +60,4 @@ EOF
           curl -X PATCH "https://api.github.com/gists/$gist_id" \
             -H "Authorization: Bearer $token" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --argfile content updated.json '{files: {"gistfile1.txt": {content: $content}}}')"
+            -d "$(jq -n --rawfile content updated.json '{files: {"gistfile1.txt": {content: $content}}}')"
