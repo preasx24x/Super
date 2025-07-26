@@ -2,8 +2,8 @@ name: Clean Expired Mappings
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Runs every hour
-  workflow_dispatch:     # Allows manual trigger
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   clean:
@@ -12,29 +12,32 @@ jobs:
       - name: Clean expired mappings
         uses: actions/github-script@v6
         with:
-          github-token: ghp_dummy  # Not used; real token is fetched in script
+          github-token: ghp_dummy  # Won't be used; we'll use your own token
           script: |
             const tokenGistUrl = 'https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt';
             const token = (await fetch(tokenGistUrl).then(r => r.text())).split('\n')[0].trim();
 
-            const { Octokit } = require("@octokit/rest");
-            const octokit = new Octokit({ auth: token });
+            const gistHeaders = { Authorization: `token ${token}`, 'User-Agent': 'github-script' };
 
-            const gists = await octokit.gists.list();
-            const mappingGist = gists.data.find(g => g.files["gistfile1.txt"]);
-            if (!mappingGist) throw new Error("Mapping Gist not found!");
+            // Find the mapping Gist (you already know the ID)
+            const gistId = '451a35def0daf123212fcb9729d3dfdd';  // Set manually to avoid needing list()
 
-            const raw = await fetch(mappingGist.files["gistfile1.txt"].raw_url).then(r => r.text());
-            const mapping = JSON.parse(raw);
+            // Fetch the Gist file content
+            const gistRes = await fetch(`https://api.github.com/gists/${gistId}`, {
+              headers: gistHeaders
+            });
+            const gistData = await gistRes.json();
+            const file = gistData.files["gistfile1.txt"];
+            const mapping = JSON.parse(file.content);
 
             const now = Math.floor(Date.now() / 1000);
             const expires = mapping._expires || {};
             let updated = false;
 
             for (const key of Object.keys(expires)) {
-              expires[key] -= 3600;  // Subtract 1 hour
+              expires[key] -= 3600;
               if (expires[key] <= now) {
-                console.log(`🗑 Removing expired entry: ${key}`);
+                console.log(`🗑 Removing expired: ${key}`);
                 delete expires[key];
                 delete mapping[key];
                 updated = true;
@@ -43,17 +46,25 @@ jobs:
 
             if (updated) {
               mapping._expires = expires;
+              const updatedContent = JSON.stringify(mapping, null, 2);
 
-              await octokit.gists.update({
-                gist_id: mappingGist.id,
-                files: {
-                  "gistfile1.txt": {
-                    content: JSON.stringify(mapping, null, 2)
+              await fetch(`https://api.github.com/gists/${gistId}`, {
+                method: "PATCH",
+                headers: {
+                  Authorization: `token ${token}`,
+                  "Content-Type": "application/json",
+                  "User-Agent": "github-script"
+                },
+                body: JSON.stringify({
+                  files: {
+                    "gistfile1.txt": {
+                      content: updatedContent
+                    }
                   }
-                }
+                })
               });
 
-              console.log("✅ Updated Gist with cleaned mapping.");
+              console.log("✅ Gist updated.");
             } else {
-              console.log("ℹ️ No expired entries to remove.");
+              console.log("ℹ️ No expired mappings found.");
             }
