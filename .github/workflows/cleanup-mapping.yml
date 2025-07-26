@@ -1,0 +1,63 @@
+name: Cleanup Gist Mapping
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # Every hour
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run cleanup script
+        run: |
+          echo "Fetching token..."
+          token=$(curl -s https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt | head -n1 | tr -d '\r')
+          
+          echo "Fetching current mapping file..."
+          raw_url="https://gist.githubusercontent.com/Preasx24/451a35def0daf123212fcb9729d3dfdd/raw/gistfile1.txt"
+          mapping=$(curl -s "$raw_url")
+
+          echo "$mapping" > mapping.json
+
+          echo "Cleaning entries..."
+          python3 - <<EOF
+import json, time, requests
+
+with open("mapping.json") as f:
+    data = json.load(f)
+
+now = int(time.time())
+expires = data.get("_expires", {})
+
+to_remove = []
+
+# Subtract 3600 seconds from all expiration times
+for key, exp in list(expires.items()):
+    new_exp = exp - 3600
+    if new_exp <= now:
+        to_remove.append(key)
+    else:
+        expires[key] = new_exp
+
+# Remove expired entries
+for key in to_remove:
+    data.pop(key, None)
+    expires.pop(key, None)
+
+data["_expires"] = expires
+
+with open("updated.json", "w") as f:
+    json.dump(data, f, indent=2)
+
+EOF
+
+          echo "Finding Gist ID..."
+          gist_id=$(curl -s -H "Authorization: Bearer $token" https://api.github.com/gists | jq -r '.[] | select(.files["gistfile1.txt"]) | .id')
+
+          echo "Patching Gist..."
+          curl -X PATCH "https://api.github.com/gists/$gist_id" \
+            -H "Authorization: Bearer $token" \
+            -H "Content-Type: application/json" \
+            -d "{\"files\": {\"gistfile1.txt\": {\"content\": $(jq -Rs '.' < updated.json)}}}"
