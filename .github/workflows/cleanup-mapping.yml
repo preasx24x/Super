@@ -2,7 +2,7 @@ name: Cleanup Gist Mapping
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -12,30 +12,24 @@ jobs:
       - name: Cleanup expired entries in Gist
         uses: actions/github-script@v6
         with:
-          # give the script permission to read/write any Gist (we supply token manually)
-          github-token: ${{ secrets.DUMMY }} # not used by script
+          github-token: 'ghp_dummy'  # Required input, but not used
           script: |
             const fetch = require('node-fetch');
 
-            // 1) Load your GitHub token from the first line of the token-Gist
             const tokenGistUrl = 'https://gist.githubusercontent.com/Preasx24/137f29d4b3b32c251bf6b7ab2b3fae28/raw/gistfile1.txt';
             const token = (await fetch(tokenGistUrl).then(r => r.text())).split('\n')[0].trim();
 
-            // 2) Instantiate an Octokit client with your token
             const { Octokit } = require("@octokit/rest");
             const octokit = new Octokit({ auth: token });
 
-            // 3) Find your mapping Gist
             const gists = await octokit.gists.list();
             const mappingGist = gists.data.find(g => g.files["gistfile1.txt"]);
             if (!mappingGist) throw new Error("Mapping Gist not found!");
 
-            // 4) Fetch and parse the current mapping JSON
             const raw = await fetch(mappingGist.files["gistfile1.txt"].raw_url).then(r => r.text());
             const mapping = JSON.parse(raw);
 
-            // 5) Subtract 3600s from each _expires, remove those now <= now
-            const now = Math.floor(Date.now()/1000);
+            const now = Math.floor(Date.now() / 1000);
             for (const key of Object.keys(mapping._expires || {})) {
               mapping._expires[key] -= 3600;
               if (mapping._expires[key] <= now) {
@@ -44,7 +38,6 @@ jobs:
               }
             }
 
-            // 6) Push the updated JSON back to the same Gist
             await octokit.gists.update({
               gist_id: mappingGist.id,
               files: {
